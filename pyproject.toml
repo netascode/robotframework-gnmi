@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "robotframework-gnmi"
+version = "0.2"
+description = "RobotFramework keywords for GNMI client"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MPL-2.0"
+keywords = ["gnmi", "gNMI", "robotframework", "network", "automation", "testing"]
+authors = [
+    {name = "Oliver Boehmer", email = "oboehmer@cisco.com"},
+    {name = "Robert Crowe", email = "rocrowe@cisco.com"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Testing",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: Robot Framework",
+    "Framework :: Robot Framework :: Library",
+]
+dependencies = [
+    "robotframework>=7.0",
+    "pygnmi>=0.8.15",
+]
+
+[project.urls]
+Homepage = "https://github.com/oboehmer/robotframework-gnmi"
+Repository = "https://github.com/oboehmer/robotframework-gnmi"
+Issues = "https://github.com/oboehmer/robotframework-gnmi/issues"
+
+[tool.ruff]
+line-length = 120
+target-version = "py38"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "N999",  # invalid module name (GNMI is a valid acronym)
+    "N811",  # constant imported as non-constant (GNMI naming is intentional)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

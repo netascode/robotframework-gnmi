@@ -1,6 +1,24 @@
-*.html
-output.xml
-*.egg*
-dist/
-build
+# Python
+*.pyc
+*.pyo
+*.py[cod]
+__pycache__/
+*.so
+
+# Virtual environments
 venv/
+.venv/
+
+# Build artifacts
+dist/
+build/
+*.egg*
+*.egg-info/
+
+# Robot Framework
+output.xml
+log.html
+report.html
+*.html
+selenium-screenshot-*.png
+.pabotsuitenames

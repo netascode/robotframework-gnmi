@@ -6,21 +6,38 @@ At the moment, we just expose the attributes of `gNMIclient.__init__`, `gNMIclie
 
 ## Installation
 
+### Using uv (recommended)
+
+[uv](https://github.com/astral-sh/uv) is a fast Python package installer:
+
+```bash
+# Install from PyPI (once published)
+uv pip install robotframework-gnmi
+
+# Or install from GitHub
+uv pip install git+https://github.com/oboehmer/robotframework-gnmi.git
 ```
-pip install -U pip wheel
+
+### Using pip
+
+```bash
+# Install from PyPI (once published)
+pip install robotframework-gnmi
+
+# Or install from GitHub
 pip install git+https://github.com/oboehmer/robotframework-gnmi.git
 ```
 
 ## Example ##
 
-Example robot file 
+Example robot file
 
 ```
 *** Settings ***
 Library   GNMI
 
 *** Variables ***
-@{target_host}    192.168.1.1   5400   
+@{target_host}    192.168.1.1   5400
 
 *** Test Cases ***
 Connect and Get
