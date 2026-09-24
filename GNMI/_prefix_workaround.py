@@ -46,9 +46,14 @@ The merge is performed on the protobuf messages rather than on path *strings*,
 so list keys (``interface[name=GigabitEthernet0/0/0/0]``) and multi-element
 prefixes survive intact.
 
-The workaround is enabled by default. It can be turned off per session or per
-call with the ``keep_prefix`` argument of the ``GNMI connect session``,
-``GNMI get`` and ``GNMI set`` keywords, which restores stock pygnmi behaviour.
+The workaround is **disabled by default**, so stock pygnmi behaviour is
+unchanged unless it is asked for. Enable it per session or per call with the
+``merge_prefix_into_path`` argument of the ``GNMI connect session``,
+``GNMI get`` and ``GNMI set`` keywords.
+
+When it is disabled and a server rejects the request with the origin-mismatch
+error above, ``GNMI get`` / ``GNMI set`` append a hint pointing at the argument
+-- see ``ORIGIN_MISMATCH_HINT``.
 """
 
 import threading
@@ -65,27 +70,44 @@ except ImportError as exc:  # pragma: no cover - guards against pygnmi restructu
         "See GNMI/_prefix_workaround.py."
     ) from exc
 
+# Substring of the server-side error this workaround exists for. Matched against
+# the exception text so the failure can be made self-explanatory.
+ORIGIN_MISMATCH_MARKER = "prefix and path origins do not match"
+
+ORIGIN_MISMATCH_HINT = (
+    "Hint: this server rejected the request because it carries a gNMI 'prefix' field "
+    "whose origin differs from the path origin (observed on IOS-XR 25.4.2). Retry with "
+    "merge_prefix_into_path=${TRUE} on 'GNMI get' / 'GNMI set', or set it as the session "
+    "default on 'GNMI connect session', to fold the prefix into each path and omit the "
+    "prefix field."
+)
+
 # Request construction happens inside the worker thread spawned by
 # GNMI._run_with_timeout, so the toggle has to be thread-local and must be set
-# from within that thread -- see with_prefix_mode().
+# from within that thread -- see with_merge_mode().
 _state = threading.local()
 
 
-def keep_prefix_enabled() -> bool:
-    """True if the workaround is currently suppressed for this thread."""
-    return getattr(_state, "keep_prefix", False)
+def is_origin_mismatch_error(exc: BaseException) -> bool:
+    """True if ``exc`` looks like the origin-mismatch rejection this module fixes."""
+    return ORIGIN_MISMATCH_MARKER in str(exc)
 
 
-def with_prefix_mode(func: Callable[..., Any], keep_prefix: bool) -> Callable[..., Any]:
-    """Wrap ``func`` so it runs with the given prefix mode in its own thread."""
+def merge_enabled() -> bool:
+    """True if the prefix should be folded into the paths for this thread."""
+    return getattr(_state, "merge", False)
+
+
+def with_merge_mode(func: Callable[..., Any], merge: bool) -> Callable[..., Any]:
+    """Wrap ``func`` so it runs with the given merge mode in its own thread."""
 
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        previous = getattr(_state, "keep_prefix", False)
-        _state.keep_prefix = bool(keep_prefix)
+        previous = getattr(_state, "merge", False)
+        _state.merge = bool(merge)
         try:
             return func(*args, **kwargs)
         finally:
-            _state.keep_prefix = previous
+            _state.merge = previous
 
     return wrapper
 
@@ -126,7 +148,7 @@ def _merge_into_update(prefix: "Path", update: "Update") -> "Update":
 def _rewrite(kwargs: dict, path_fields: tuple, update_fields: tuple) -> dict:
     """Drop the ``prefix`` kwarg, folding it into the relevant path fields."""
     prefix = kwargs.get("prefix")
-    if prefix is None or keep_prefix_enabled():
+    if prefix is None or not merge_enabled():
         return kwargs
 
     kwargs.pop("prefix")
