@@ -1,9 +1,18 @@
 import threading
 from typing import Any, Callable, Optional
 
-from pygnmi.client import gNMIclient
+from pygnmi.client import gNMIclient, gNMIException
 from robot.api import logger
 from robot.api.deco import keyword
+
+from . import _prefix_workaround
+
+# Some gNMI servers (observed on IOS-XR 25.4.2) reject any request whose
+# ``prefix`` field is present with an origin differing from the path origin.
+# pygnmi always emits that field, so every origin-bearing request fails there.
+# Installing the wrappers is inert until a caller opts in via
+# merge_prefix_into_path. See GNMI/_prefix_workaround.py for the full analysis.
+_prefix_workaround.apply()
 
 
 class GNMI:
@@ -12,6 +21,7 @@ class GNMI:
     def __init__(self) -> None:
         self.sessions: dict[str, gNMIclient] = {}
         self.operation_timeout: Optional[int] = None  # Global timeout for all operations
+        self.merge_prefix_into_path: dict[str, bool] = {}  # Per-session prefix-workaround opt-in
 
     @keyword("GNMI connect session")
     def connect_session(
@@ -19,8 +29,29 @@ class GNMI:
         session: str,
         timeout: Optional[int] = None,
         operation_timeout: Optional[int] = None,
+        merge_prefix_into_path: bool = False,
         **kwargs: Any,
     ) -> None:
+        """
+        Establish a gNMI session.
+
+        The timeout argument (optional) is the connection timeout in seconds.
+        The operation_timeout argument (optional) sets a default timeout applied
+        to subsequent get/set operations on this session.
+
+        merge_prefix_into_path (optional, default False) enables a
+        compatibility workaround. Some gNMI servers (observed on IOS-XR 25.4.2)
+        reject any request carrying a ``prefix`` field whose origin differs
+        from the path origin, failing with "prefix and path origins do not
+        match". When enabled, the request prefix is folded into each path and
+        the prefix field is omitted. The rewritten request is equivalent and
+        complies with gNMI specification section 2.7.
+
+        Leave it unset (the default) for stock pygnmi behaviour. It can be
+        overridden per call on ``GNMI get`` and ``GNMI set``.
+
+        All remaining arguments are passed through to pygnmi's gNMIclient.
+        """
         if not session:
             raise ValueError("need to provide a non-empty session parameter")
         if session in self.sessions:
@@ -41,6 +72,7 @@ class GNMI:
         )
         self.sessions[session] = gNMIclient(**kwargs)
         self.sessions[session].connect(timeout=timeout)
+        self.merge_prefix_into_path[session] = bool(merge_prefix_into_path)
 
     def _run_with_timeout(
         self,
@@ -98,6 +130,32 @@ class GNMI:
 
         return result
 
+    def _execute(
+        self,
+        func: Callable[..., Any],
+        timeout: Optional[int],
+        merge_prefix: bool,
+        **kwargs: Any,
+    ) -> Any:
+        """Run a pygnmi operation with the requested prefix-merge mode.
+
+        If the workaround is off and the server rejects the request with the
+        origin-mismatch error it exists for, the error is re-raised with a hint
+        naming the argument that fixes it -- otherwise the failure is opaque and
+        the user has no way to discover the option.
+        """
+        try:
+            return self._run_with_timeout(
+                _prefix_workaround.with_merge_mode(func, merge_prefix),
+                timeout,
+                **kwargs,
+            )
+        except Exception as e:
+            if not merge_prefix and _prefix_workaround.is_origin_mismatch_error(e):
+                logger.warn(_prefix_workaround.ORIGIN_MISMATCH_HINT)
+                raise gNMIException(f"{e}\n\n{_prefix_workaround.ORIGIN_MISMATCH_HINT}", e) from e
+            raise
+
     @keyword("GNMI get")
     def get(
         self,
@@ -107,6 +165,7 @@ class GNMI:
         datatype: str = "all",
         encoding: str = "json",
         timeout: Optional[int] = None,
+        merge_prefix_into_path: Optional[bool] = None,
     ) -> dict[str, Any]:
         """
         Collecting the information about the resources from defined paths.
@@ -132,6 +191,10 @@ class GNMI:
           - json_ietf
         The timeout argument (optional) specifies operation timeout in seconds.
         If not provided, uses the global operation_timeout set during connection.
+
+        merge_prefix_into_path (optional) overrides the session's
+        prefix-workaround setting for this call only. See ``GNMI connect
+        session`` for details. Leave unset to inherit the session default.
         """
         if not (session and session in self.sessions):
             raise ValueError(f"Session {session} is not established, please connect it first")
@@ -142,9 +205,16 @@ class GNMI:
         if effective_timeout:
             logger.debug(f"Executing GNMI get with {effective_timeout}s timeout")
 
-        result = self._run_with_timeout(
+        effective_merge = (
+            merge_prefix_into_path
+            if merge_prefix_into_path is not None
+            else self.merge_prefix_into_path.get(session, False)
+        )
+
+        result = self._execute(
             self.sessions[session].get,
             effective_timeout,
+            effective_merge,
             prefix=prefix,
             path=path,
             datatype=datatype,
@@ -167,6 +237,7 @@ class GNMI:
         update: Optional[object] = None,
         encoding: str = "json",
         timeout: Optional[int] = None,
+        merge_prefix_into_path: Optional[bool] = None,
     ) -> dict[str, Any]:
         """
         Changing the configuration on the destination network elements.
@@ -187,6 +258,10 @@ class GNMI:
           - json_ietf
         The timeout argument (optional) specifies operation timeout in seconds.
         If not provided, uses the global operation_timeout set during connection.
+
+        merge_prefix_into_path (optional) overrides the session's
+        prefix-workaround setting for this call only. See ``GNMI connect
+        session`` for details. Leave unset to inherit the session default.
         """
 
         if not (session and session in self.sessions):
@@ -198,9 +273,16 @@ class GNMI:
         if effective_timeout:
             logger.debug(f"Executing GNMI set with {effective_timeout}s timeout")
 
-        result = self._run_with_timeout(
+        effective_merge = (
+            merge_prefix_into_path
+            if merge_prefix_into_path is not None
+            else self.merge_prefix_into_path.get(session, False)
+        )
+
+        result = self._execute(
             self.sessions[session].set,
             effective_timeout,
+            effective_merge,
             delete=delete,
             replace=replace,
             update=update,
